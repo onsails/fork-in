@@ -16,19 +16,21 @@ Conversation-fork, not Tab-fork.
 
 ## Consequences
 
-- The fork copy preserves prompt-cache lineage: the copied header carries
+- Under omp, the fork copy preserves prompt-cache lineage: the copied header carries
   `providerPromptCacheKey = original's key ?? original session id`, mirroring omp's
-  native `SessionManager.forkFrom` (verified in oh-my-pi source,
-  `session-manager.ts:2558`). Measured on the manifest/openai-completions provider
-  (2026-08-15), the fork copy resumed with a warm prefix cache regardless of the key
-  (warm first turn `cacheRead 74240/75291`; stripped-key control `75264/75291`) —
-  that provider caches by content, not by key. The preserved key still matters for
-  providers that route cache by key (omp threads `promptCacheKey` per request,
-  `sdk.ts:3209`), and it is what native `/fork` does; dropping it was a divergence
-  from omp's own fork semantics (ADR-0001's original "no prompt-cache key" stance is
-  superseded).
+  native `SessionManager.forkFrom` (`session-manager.ts:2558`). A live fork test on
+  2026-08-15 proved the copied session resumed warm (`cacheRead: 83456`, `input: 547`).
+  A key-stripped control also resumed warm (`cacheRead: 75264`, `input: 2130`) because
+  that provider caches identical transcript prefixes by content. Therefore the test
+  proves warm fork behavior, but does not isolate the key's marginal effect. pi has no
+  equivalent header field; it starts with its fresh session id on key-routed providers.
+- Lineage uses each host's native representation: omp writes the source session id to
+  `parentSession`; pi writes the source session file path.
 - The session header is located by scanning for the first session record, not by
   fixed line: omp writes a title record on line 1 (header on line 2), pi writes the
   header on line 1.
 - pi has no omp-style sibling artifact directory (bash output goes to the OS tmpdir,
   referenced by entry fields), so the recursive artifact copy is a no-op under pi.
+- Live herdr verification on 2026-08-15 created and resumed both tab-forks: omp
+  `proof-omp` → `proof-ompf1`; pi `proof-pi` → `proof-pif1`. Both forked agents were
+  detected idle and displayed the source session's prior response.

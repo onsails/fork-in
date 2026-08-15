@@ -58,6 +58,19 @@ describe("herdr client", () => {
     expect(seen).toEqual([["agent", "start", "fork-w14-2f1", "--kind", "omp", "--pane", "w14:p5", "--", "--resume", "abcd"]]);
   });
 
+  it("passes pi as the herdr agent kind", async () => {
+    const seen: string[][] = [];
+    const runner: Runner = {
+      run: async (argv) => {
+        seen.push([...argv]);
+        return "{}";
+      },
+    };
+    const client = new HerdrClient("pi", runner);
+    await client.startAgent({ paneId: "w14:p6", agentName: "fork-w14-2f2", agentArgs: ["--session", "/tmp/fork.jsonl"] });
+    expect(seen).toEqual([["agent", "start", "fork-w14-2f2", "--kind", "pi", "--pane", "w14:p6", "--", "--session", "/tmp/fork.jsonl"]]);
+  });
+
   it("fails loudly on a malformed tab-create response", async () => {
     const { client } = clientWith([
       { argv: ["tab", "create", "--workspace", "w14", "--cwd", "/repo", "--label", "x", "--no-focus"], stdout: '{"id":"cli:tab:create","result":{}}' },

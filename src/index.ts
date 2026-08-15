@@ -3,9 +3,8 @@ import { forkLabel } from "./fork-label";
 import { createForkCopy, type ForkCopy } from "./fork-copy";
 
 /**
- * The omp extension factory surface fork-in-herdr needs. omp's real
- * ExtensionAPI is broader; this structural type keeps the plugin
- * compilable without importing omp internals.
+ * The shared extension factory surface fork-in-herdr needs. omp and pi expose
+ * this shape; the structural type avoids importing either host's internals.
  */
 export interface ExtensionApiLike {
   registerCommand(
@@ -17,10 +16,7 @@ export interface ExtensionApiLike {
   ): void;
 }
 
-/**
- * omp's ExtensionCommandContext as seen through this plugin's narrow
- * adapter (HandlerCtx). Only what /fork-in-herdr reads.
- */
+/** The command context fields used by the shared HandlerCtx adapter. */
 export interface ExtensionCommandCtx {
   cwd: string;
   isIdle(): boolean;
@@ -77,7 +73,6 @@ export interface AgentHostSpec {
   resumeArgs: (fork: ForkCopy) => string[];
 }
 
-export type HerdrKind = AgentHostSpec["kind"];
 
 function handlerCtx(ctx: ExtensionCommandCtx, spec: AgentHostSpec): HandlerCtx {
   const sessionFile = ctx.sessionManager.getSessionFile();
@@ -115,7 +110,7 @@ export async function runForkInHerdr(ctx: HandlerCtx): Promise<void> {
   }
 
   ctx.notify("fork-in-herdr: creating fork copy…");
-  const fork = await createForkCopy(ctx.sessionFile);
+  const fork = await createForkCopy(ctx.sessionFile, ctx.spec.kind);
 
   try {
     const original = await ctx.herdr.getTab(HERDR_TAB_ID);
@@ -148,13 +143,13 @@ export async function runForkInHerdr(ctx: HandlerCtx): Promise<void> {
     ctx.notify(`fork-in-herdr: forked to ${label} (session ${fork.newId})`);
   } catch (err) {
     throw new Error(
-      `fork-in-herdr: fork copy ${fork.newId} exists; if a tab was left open, resume it manually: ${ctx.spec.kind} ${ctx.spec.resumeArgs(fork).join(" ")}: ${err instanceof Error ? err.message : String(err)}`,
+      `fork-in-herdr: fork copy ${fork.newId} exists; if a tab was left open, resume it manually: ${ctx.spec.kind} ${[...ctx.spec.agentArgs, ...ctx.spec.resumeArgs(fork)].join(" ")}: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 }
 
-export function registerForkInHerdr(pi: ExtensionApiLike, spec: AgentHostSpec): void {
-  pi.registerCommand("fork-in-herdr", {
+export function registerForkInHerdr(api: ExtensionApiLike, spec: AgentHostSpec): void {
+  api.registerCommand("fork-in-herdr", {
     description: "Tab-fork: fork this conversation into a new herdr tab",
     handler: async (args, ctx) => {
       if (args.trim() !== "") {

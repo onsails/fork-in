@@ -43,7 +43,7 @@ An agent's built-in fork (`/fork` in omp or pi): duplicates the conversation ins
 _Avoid_: applying "fork" to both concepts without a qualifier
 
 **Fork copy**:
-The plugin-created agent-session file: a copy of the original session's transcript with a fresh session id, `parentSession` pointing at the original, and the original's prompt-cache lineage. The new tab's agent resumes this file.
+The plugin-created agent-session file: a copy of the original session's transcript with a fresh session id and native `parentSession` lineage. Under omp, it also preserves the original's prompt-cache lineage. The new tab's agent resumes this file.
 _Avoid_: clone, duplicate session
 
 **Original tab**:

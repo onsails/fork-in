@@ -19,7 +19,7 @@ export interface ForkCopy {
   file: string;
   /** The fork copy's fresh session id (UUIDv7, omp-native format). */
   newId: string;
-  /** The original session's id, recorded as the fork copy's parentSession. */
+  /** Native lineage reference: omp source id; pi source file path. */
   parentSession: string;
   /** Absolute path of the copied artifact directory, or null if the original had none. */
   artifactDir: string | null;
@@ -47,7 +47,7 @@ interface SessionHeader {
  * directory (omp) is copied recursively when present, so artifact://
  * references keep resolving.
  */
-export async function createForkCopy(sessionFile: string): Promise<ForkCopy> {
+export async function createForkCopy(sessionFile: string, host: "omp" | "pi" = "omp"): Promise<ForkCopy> {
   let text: string;
   try {
     text = await readFile(sessionFile, "utf8");
@@ -88,11 +88,12 @@ export async function createForkCopy(sessionFile: string): Promise<ForkCopy> {
 
   const newId = uuidv7();
   const { providerPromptCacheKey: inheritedKey, ...rest } = header;
+  const parentSession = host === "pi" ? sessionFile : header.id;
   const newHeader: SessionHeader = {
     ...rest,
     id: newId,
-    parentSession: header.id,
-    providerPromptCacheKey: inheritedKey ?? header.id,
+    parentSession,
+    ...(host === "omp" ? { providerPromptCacheKey: inheritedKey ?? header.id } : {}),
   };
   const content = [
     ...lines.slice(0, headerIndex),
@@ -112,5 +113,5 @@ export async function createForkCopy(sessionFile: string): Promise<ForkCopy> {
     await cp(originalArtifactDir, artifactDir, { recursive: true });
   }
 
-  return { file: newFile, newId, parentSession: header.id, artifactDir };
+  return { file: newFile, newId, parentSession, artifactDir };
 }

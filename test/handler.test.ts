@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { runForkInHerdr, registerForkInHerdr, ompSpec } from "../src/index";
+import { runForkInHerdr, registerForkInHerdr, ompSpec, piSpec } from "../src/index";
 import type { ExtensionApiLike, ExtensionCommandCtx, HandlerCtx, HerdrLike } from "../src/index";
 
 const ORIGINAL_ID = "01a0028a-3480-7000-8a93-16440ac9433f";
@@ -93,6 +93,13 @@ describe("runForkInHerdr", () => {
     expect(calls.find((c) => c.startsWith("startAgent:"))).toMatch(/--profile,work,--resume,/);
   });
 
+  it("starts pi with the fork copy's absolute session path", async () => {
+    const { herdr, calls } = fakeHerdr();
+    await runForkInHerdr(handlerCtx({ herdr, spec: piSpec() }));
+    const start = calls.find((call) => call.startsWith("startAgent:"));
+    expect(start).toMatch(/:--session,\/.*\.jsonl$/);
+  });
+
   it("retries agent start when the pane is not ready, then succeeds", async () => {
     const calls: string[] = [];
     let attempts = 0;
@@ -137,6 +144,12 @@ describe("runForkInHerdr", () => {
   it("reports the session id when agent start fails after retries", async () => {
     const { herdr } = fakeHerdr("startAgent");
     await expect(runForkInHerdr(handlerCtx({ herdr }))).rejects.toThrow(/omp --resume/);
+  });
+
+  it("includes omp profile args in the recovery command", async () => {
+    const { herdr } = fakeHerdr("createTab");
+    const spec = { ...ompSpec(), agentArgs: ["--profile", "work"] };
+    await expect(runForkInHerdr(handlerCtx({ herdr, spec }))).rejects.toThrow(/omp --profile work --resume/);
   });
 });
 

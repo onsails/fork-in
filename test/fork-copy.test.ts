@@ -102,12 +102,13 @@ describe("createForkCopy", () => {
         JSON.stringify({ type: "message", id: "m1", parentId: null, timestamp: "t" }),
       ].join("\n") + "\n",
     );
-    const fork = await createForkCopy(piStyle);
+    const fork = await createForkCopy(piStyle, "pi");
     const lines = (await Bun.file(fork.file).text()).trimEnd().split("\n");
     expect(lines).toHaveLength(2);
     const header = JSON.parse(lines[0]!);
     expect(header.id).toBe(fork.newId);
-    expect(header.parentSession).toBe("01a0028a-3480-7000-8a93-16440ac9433f");
+    expect(header.parentSession).toBe(piStyle);
+    expect(header).not.toHaveProperty("providerPromptCacheKey");
     expect(lines[1]).toContain('"m1"');
   });
 
@@ -120,12 +121,12 @@ describe("createForkCopy", () => {
         JSON.stringify({ type: "message", id: "m1", parentId: null, timestamp: "t" }),
       ].join("\n") + "\n",
     );
-    expect(createForkCopy(bad)).rejects.toThrow(/no session header line/);
+    await expect(createForkCopy(bad)).rejects.toThrow(/no session header line/);
   });
 
   it("refuses a session whose transcript has not been written yet (ENOENT case)", async () => {
     const pending = join(sessionDir, "2026-08-15T01-06-27-312Z_01a002f4-b770-7000-8419-0719e32835fb.jsonl");
-    expect(createForkCopy(pending)).rejects.toThrow(/no transcript yet/);
+    await expect(createForkCopy(pending)).rejects.toThrow(/no transcript yet/);
   });
 
   it("refuses an unsupported session header version", async () => {
@@ -136,6 +137,6 @@ describe("createForkCopy", () => {
         JSON.stringify({ type: "session", version: 4, id: "x", cwd: "/" }),
       ].join("\n") + "\n",
     );
-    expect(createForkCopy(bad)).rejects.toThrow(/version/);
+    await expect(createForkCopy(bad)).rejects.toThrow(/version/);
   });
 });
