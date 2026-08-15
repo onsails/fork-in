@@ -190,3 +190,16 @@ export function registerCommands(api: ExtensionApiLike, spec: AgentHostSpec): vo
     },
   });
 }
+
+/**
+ * Fallback entry for hosts that skip the package manifest and walk the
+ * source directory (omp's settings+config.yml dual-config path resolves
+ * configured dirs by directory scan, not package.json). The per-host
+ * manifests remain authoritative: omp.extensions -> src/omp.ts,
+ * pi.extensions -> src/pi.ts. This export only fires when neither is
+ * honored, so detect the host from the running binary's basename.
+ */
+export default function forkIn(api: ExtensionApiLike): void {
+  const host = process.argv[0]?.endsWith("/pi") || process.argv[0] === "pi" ? "pi" : "omp";
+  registerCommands(api, host === "pi" ? piSpec() : ompSpec());
+}
