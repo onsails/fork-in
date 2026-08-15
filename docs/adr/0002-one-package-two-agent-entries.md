@@ -1,40 +1,34 @@
 # One package, two agent entries (omp and pi)
 
-`/fork-in-herdr` must run inside both omp and pi: the two agents share a
-pi-derived extension surface (`registerCommand(name, {description, handler(args, ctx)})`
-with `ctx.cwd`, `ctx.isIdle()`, `ctx.ui.notify`, `ctx.sessionManager.getSessionFile()`)
-and a compatible session format (JSONL, `{"type":"session","version":3,...}` header,
-`parentSession` lineage). We ship one package whose `package.json` declares both
-manifests — `omp: {extensions: ["./src/omp.ts"]}` and `pi: {extensions: ["./src/pi.ts"]}` —
-and one shared core. The thin per-agent entries differ only in host facts: herdr's
-`agent start --kind` (omp|pi), launch flags (`omp --resume <id>` with `--profile`
-passthrough; `pi --session <path>`, since pi's `--resume` is an interactive picker),
-and bootstrap-arg capture (pi has no `--profile`).
-
-The fork copy now preserves the parent's prompt-cache lineage:
-`providerPromptCacheKey = the original header's key, or the original session id`
-— mirroring omp's native `SessionManager.forkFrom()` — instead of dropping it.
-On providers with explicit cache routing (Anthropic-style) the resumed fork's
-first turn hits the parent's warm cache, matching native `/fork` semantics;
-concurrent key sharing follows omp's own `/tan` precedent. pi headers carry no
-such field, so there it is a future-proofing no-op.
-
-Rejected: runtime host detection in a single entry (heuristic bug farm); using
-pi's `ctx.fork()` (switches the *current* process to the fork — Conversation-fork
-semantics, cannot produce a separate herdr tab).
+The plugin supports both omp and pi as host agents from one repository/package:
+`package.json` carries both manifests — `omp: {extensions: ["./src/omp.ts"]}` and
+`pi: {extensions: ["./src/pi.ts"]}` — over a shared core (`src/index.ts`). The two
+agents share the extension surface this plugin needs (`registerCommand(name,
+{description, handler(args, ctx)})`, `ctx.cwd`, `ctx.isIdle()`, `ctx.ui.notify`,
+`ctx.sessionManager.getSessionFile()`) and the on-disk session format (JSONL, session
+header version 3, `parentSession` lineage); omp is pi-derived. Per-host variance is
+confined to a thin entry that supplies a host spec: herdr `--kind`, bootstrap args
+(`--profile` passthrough, omp only), and the deterministic resume argv — omp
+`--resume <id>` (id resolves only inside the current session dir), pi `--session
+<path>` (pi's `--resume` is an interactive picker). pi's `ctx.fork()` was rejected
+for the same reason as omp's `/fork`: it switches the current process to the fork —
+Conversation-fork, not Tab-fork.
 
 ## Consequences
 
-- Source must stay loadable by pi's jiti transform, not just Bun: no optional
-  catch binding inside callback position (a `findIndex` predicate with `try {}
-  catch {}` failed to parse and silently skipped extension discovery). Parse
-  all lines up front instead.
-- pi's session header is line 1 (no title record); omp's is line 2. The fork
-  copy scans for the first session record instead of assuming a position.
-- pi has no sibling artifact directory (bash logs go to OS tmpdir referenced
-  by entry fields); the artifact copy is a no-op there.
-- omp resume-by-id resolves inside the current session directory, so the fork
-  copy is written beside the original in both agents (harmless symmetry for pi).
-- Cache-key A/B was verified structurally in omp source (header key adopted on
-  resume, routed per request) and end-to-end resume+cacheRead observed on
-  OpenAI content-addressed caching, where the key is not the deciding factor.
+- The fork copy preserves prompt-cache lineage: the copied header carries
+  `providerPromptCacheKey = original's key ?? original session id`, mirroring omp's
+  native `SessionManager.forkFrom` (verified in oh-my-pi source,
+  `session-manager.ts:2558`). Measured on the manifest/openai-completions provider
+  (2026-08-15), the fork copy resumed with a warm prefix cache regardless of the key
+  (warm first turn `cacheRead 74240/75291`; stripped-key control `75264/75291`) —
+  that provider caches by content, not by key. The preserved key still matters for
+  providers that route cache by key (omp threads `promptCacheKey` per request,
+  `sdk.ts:3209`), and it is what native `/fork` does; dropping it was a divergence
+  from omp's own fork semantics (ADR-0001's original "no prompt-cache key" stance is
+  superseded).
+- The session header is located by scanning for the first session record, not by
+  fixed line: omp writes a title record on line 1 (header on line 2), pi writes the
+  header on line 1.
+- pi has no omp-style sibling artifact directory (bash output goes to the OS tmpdir,
+  referenced by entry fields), so the recursive artifact copy is a no-op under pi.

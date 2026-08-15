@@ -22,7 +22,10 @@ _Avoid_: bot, assistant
 
 **Host**:
 The agent the plugin is running inside — omp or pi. One entry file per host; shared logic is host-neutral.
-_Avoid_: runtime, backend
+
+**Agent session**:
+The host's persisted conversation: a JSONL transcript (session header version 3) plus, under omp, a sibling artifact directory. Identified by its session id.
+_Avoid_: omp session, pi session, conversation (when meaning the file)
 
 **Label**:
 The user-visible name string of a tab. Herdr defaults labels to tab numbers ("1", "2"). Labels are not documented as unique.
@@ -40,7 +43,7 @@ An agent's built-in fork (`/fork` in omp or pi): duplicates the conversation ins
 _Avoid_: applying "fork" to both concepts without a qualifier
 
 **Fork copy**:
-The plugin-created agent-session file: a copy of the original session's transcript with a fresh session id, `parentSession` pointing at the original, and the original's prompt-cache lineage (omp). The new tab's agent resumes this file.
+The plugin-created agent-session file: a copy of the original session's transcript with a fresh session id, `parentSession` pointing at the original, and the original's prompt-cache lineage. The new tab's agent resumes this file.
 _Avoid_: clone, duplicate session
 
 **Original tab**:
