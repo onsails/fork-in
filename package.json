@@ -3,7 +3,10 @@
   "version": "0.1.0",
   "description": "omp extension: /fork-in-herdr tab-forks the current herdr tab with the omp conversation",
   "omp": {
-    "extensions": ["./src/index.ts"]
+    "extensions": ["./src/omp.ts"]
+  },
+  "pi": {
+    "extensions": ["./src/pi.ts"]
   },
   "exports": {
     ".": "./src/index.ts"

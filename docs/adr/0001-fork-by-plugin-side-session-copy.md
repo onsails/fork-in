@@ -6,7 +6,9 @@ extension command contexts; the reachable alternatives don't fork (`newSession` 
 empty-with-lineage, `branch` truncates at the selected entry, copies no artifacts, and
 adopts the branch in the current tab). We decided the plugin performs the fork itself:
 copy the session JSONL with a fresh UUIDv7 id and `parentSession` = original id, drop
-`providerPromptCacheKey`, and recursively copy the sibling artifact directory.
+`providerPromptCacheKey` originally; that drop was superseded by ADR-0002: the fork
+copy now preserves the original's prompt-cache lineage, like omp's native forkFrom.
+and recursively copy the sibling artifact directory.
 
 Rejected: patching omp to expose a `forkToFile()` extension-context method (composes
 existing `SessionManager.forkFrom()` + artifact copy). Cleaner long-term, but forces a
@@ -16,9 +18,10 @@ working artifacts.
 
 ## Consequences
 
-- The plugin is coupled to the on-disk session format (session header version 3): the
-  header is the second JSONL line (line 1 is a title record); rewrite it by parse, not
-  regex.
+- The plugin is coupled to the on-disk session format (session header version 3).
+  Originally the header was assumed to sit on line 2; ADR-0002 generalized this
+  to a scan for the first session record (pi's header is line 1). Rewrite it by
+  parse, not regex.
 - Resume-by-id only resolves files inside the current session directory
   (`~/.omp/agent/sessions/<cwd-slug>/`); the fork copy must be written there. The new
   herdr tab shares the cwd, so this holds by construction.

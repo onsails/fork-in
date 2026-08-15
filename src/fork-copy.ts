@@ -25,11 +25,16 @@ interface SessionHeader {
 }
 
 /**
- * Creates the fork copy of a session file (ADR-0001): a new JSONL in the
- * same session directory whose header (line 2) carries a fresh UUIDv7 id,
- * parentSession = the original id, and no prompt-cache key; every other
- * line is byte-identical. The sibling artifact directory is copied
- * recursively when present, so artifact:// references keep resolving.
+ * Creates the fork copy of a session file (ADR-0001, ADR-0002): a new JSONL
+ * in the same session directory whose header carries a fresh UUIDv7 id,
+ * parentSession = the original id, and the original's prompt-cache lineage
+ * (providerPromptCacheKey = the original's key, or its session id — mirroring
+ * omp's native forkFrom, which routes on the header id when no explicit key
+ * exists); every other line is byte-identical. The session header is located
+ * by scanning for the first session record: omp puts a title record on
+ * line 1 (header on line 2), pi's header is line 1. The sibling artifact
+ * directory (omp) is copied recursively when present, so artifact://
+ * references keep resolving.
  */
 export async function createForkCopy(sessionFile: string): Promise<ForkCopy> {
   const file = Bun.file(sessionFile);
@@ -40,21 +45,23 @@ export async function createForkCopy(sessionFile: string): Promise<ForkCopy> {
   }
   const text = await file.text();
   const lines = text.split("\n");
-  // Files end with a trailing newline; an empty final element is not a line.
   if (lines.at(-1) === "") lines.pop();
 
-  const headerLine = lines[1];
-  if (headerLine === undefined) {
-    throw new Error(`fork-in-herdr: session file has no session header on line 2: ${sessionFile}`);
+  const headerIndex = lines.findIndex((line) => {
+    try {
+      return (JSON.parse(line) as { type?: string }).type === "session";
+    } catch {
+      return false;
+    }
+  });
+  if (headerIndex === -1) {
+    throw new Error(`fork-in-herdr: session file has no session header line: ${sessionFile}`);
   }
   let header: SessionHeader;
   try {
-    header = JSON.parse(headerLine) as SessionHeader;
+    header = JSON.parse(lines[headerIndex]!) as SessionHeader;
   } catch {
-    throw new Error(`fork-in-herdr: session header on line 2 is not JSON: ${sessionFile}`);
-  }
-  if (header.type !== "session") {
-    throw new Error(`fork-in-herdr: session header is not on line 2 (found ${header.type}): ${sessionFile}`);
+    throw new Error(`fork-in-herdr: session header (line ${headerIndex + 1}) is not JSON: ${sessionFile}`);
   }
   if (header.version !== SUPPORTED_HEADER_VERSION) {
     throw new Error(
@@ -64,13 +71,23 @@ export async function createForkCopy(sessionFile: string): Promise<ForkCopy> {
   if (typeof header.id !== "string" || header.id === "") {
     throw new Error(`fork-in-herdr: session header has no session id: ${sessionFile}`);
   }
+
   const newId = Bun.randomUUIDv7();
-  const { providerPromptCacheKey: _drop, ...rest } = header;
-  const newHeader: SessionHeader = { ...rest, id: newId, parentSession: header.id };
+  const { providerPromptCacheKey: inheritedKey, ...rest } = header;
+  const newHeader: SessionHeader = {
+    ...rest,
+    id: newId,
+    parentSession: header.id,
+    providerPromptCacheKey: inheritedKey ?? header.id,
+  };
+  const content = [
+    ...lines.slice(0, headerIndex),
+    JSON.stringify(newHeader),
+    ...lines.slice(headerIndex + 1),
+  ].join("\n") + "\n";
 
   const dir = dirname(sessionFile);
   const newFile = join(dir, `${new Date().toISOString().replace(/[:.]/g, "-").slice(0, -1)}_${newId}.jsonl`);
-  const content = [lines[0] ?? "", JSON.stringify(newHeader), ...lines.slice(2)].join("\n") + "\n";
   await mkdir(dir, { recursive: true });
   await writeFile(newFile, content, { flag: "wx" });
 

@@ -63,11 +63,11 @@ describe("createForkCopy", () => {
     const origLines = (await Bun.file(file).text()).trimEnd().split("\n");
     expect(lines[0]).toBe(origLines[0]);
     expect(lines[2]).toBe(origLines[2]);
-    // header: new id, lineage, no prompt-cache key
+    // header: new id, lineage, prompt-cache lineage preserved
     const header = JSON.parse(lines[1]!);
     expect(header.id).toBe(fork.newId);
     expect(header.parentSession).toBe(oldId);
-    expect(header).not.toHaveProperty("providerPromptCacheKey");
+    expect(header.providerPromptCacheKey).toBe(oldId);
     expect(header.cwd).toBe("/home/wb/dev/os/fork-in-herdr");
     expect(header.version).toBe(3);
   });
@@ -93,16 +93,34 @@ describe("createForkCopy", () => {
     expect(await Bun.file(fork.file).exists()).toBe(true);
   });
 
-  it("refuses a session header that is not on line 2", async () => {
+  it("finds the session header at any line (pi: line 1, omp: line 2)", async () => {
+    const piStyle = join(sessionDir, "pi-header-line1.jsonl");
+    writeFileSync(
+      piStyle,
+      [
+        JSON.stringify({ type: "session", version: 3, id: "01a0028a-3480-7000-8a93-16440ac9433f", timestamp: "t", cwd: "/", parentSession: null }),
+        JSON.stringify({ type: "message", id: "m1", parentId: null, timestamp: "t" }),
+      ].join("\n") + "\n",
+    );
+    const fork = await createForkCopy(piStyle);
+    const lines = (await Bun.file(fork.file).text()).trimEnd().split("\n");
+    expect(lines).toHaveLength(2);
+    const header = JSON.parse(lines[0]!);
+    expect(header.id).toBe(fork.newId);
+    expect(header.parentSession).toBe("01a0028a-3480-7000-8a93-16440ac9433f");
+    expect(lines[1]).toContain('"m1"');
+  });
+
+  it("refuses a session file with no session header at all", async () => {
     const bad = join(sessionDir, "bad-header.jsonl");
     writeFileSync(
       bad,
       [
-        JSON.stringify({ type: "session", version: 3, id: "x", cwd: "/" }),
         JSON.stringify({ type: "title", v: 1, title: "" }),
+        JSON.stringify({ type: "message", id: "m1", parentId: null, timestamp: "t" }),
       ].join("\n") + "\n",
     );
-    expect(createForkCopy(bad)).rejects.toThrow(/session header/);
+    expect(createForkCopy(bad)).rejects.toThrow(/no session header line/);
   });
 
   it("refuses a session whose transcript has not been written yet (ENOENT case)", async () => {
@@ -115,7 +133,6 @@ describe("createForkCopy", () => {
     writeFileSync(
       bad,
       [
-        JSON.stringify({ type: "title", v: 1, title: "" }),
         JSON.stringify({ type: "session", version: 4, id: "x", cwd: "/" }),
       ].join("\n") + "\n",
     );

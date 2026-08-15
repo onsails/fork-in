@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { runForkInHerdr, forkInHerdr } from "../src/index";
+import { runForkInHerdr, registerForkInHerdr, ompSpec } from "../src/index";
 import type { ExtensionApiLike, ExtensionCommandCtx, HandlerCtx, HerdrLike } from "../src/index";
 
 const ORIGINAL_ID = "01a0028a-3480-7000-8a93-16440ac9433f";
@@ -55,7 +55,7 @@ function handlerCtx(overrides: Partial<HandlerCtx> = {}): HandlerCtx {
     env: { HERDR_ENV: "1", HERDR_WORKSPACE_ID: "w14", HERDR_TAB_ID: "w14:t1", HERDR_PANE_ID: "w14:p1" },
     busy: false,
     notify: () => {},
-    ompArgs: [],
+    spec: { kind: "omp", agentArgs: [], resumeArgs: (fork) => ["--resume", fork.newId] },
     ...overrides,
   };
 }
@@ -89,7 +89,7 @@ describe("runForkInHerdr", () => {
 
   it("forwards the running omp's profile to the forked omp", async () => {
     const { herdr, calls } = fakeHerdr();
-    await runForkInHerdr(handlerCtx({ herdr, ompArgs: ["--profile", "work"] }));
+  await runForkInHerdr(handlerCtx({ herdr, spec: { ...ompSpec(), agentArgs: ["--profile", "work"] } }));
     expect(calls.find((c) => c.startsWith("startAgent:"))).toMatch(/--profile,work,--resume,/);
   });
 
@@ -152,7 +152,7 @@ describe("registration", () => {
         handler = options.handler;
       },
     };
-    forkInHerdr(api);
+    registerForkInHerdr(api, ompSpec());
     expect(name).toBe("fork-in-herdr");
     expect(description).toMatch(/herdr/i);
     expect(handler).toBeDefined();

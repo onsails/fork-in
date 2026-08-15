@@ -40,8 +40,10 @@ export interface Tab {
  */
 export class HerdrClient {
   #runner: Runner;
+  #kind: "omp" | "pi";
 
-  constructor(runner: Runner = processRunner) {
+  constructor(kind: "omp" | "pi" = "omp", runner: Runner = processRunner) {
+    this.#kind = kind;
     this.#runner = runner;
   }
 
@@ -91,7 +93,7 @@ export class HerdrClient {
       "start",
       opts.agentName,
       "--kind",
-      "omp",
+      this.#kind,
       "--pane",
       opts.paneId,
       "--",

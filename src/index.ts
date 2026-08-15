@@ -1,6 +1,6 @@
 import { HerdrClient } from "./herdr-client";
 import { forkLabel } from "./fork-label";
-import { createForkCopy } from "./fork-copy";
+import { createForkCopy, type ForkCopy } from "./fork-copy";
 
 /**
  * The omp extension factory surface fork-in-herdr needs. omp's real
@@ -39,8 +39,8 @@ export interface HandlerCtx {
   env: Record<string, string | undefined>;
   busy: boolean;
   notify: (message: string) => void;
-  /** Bootstrap args of the running omp process (e.g. ["--profile", "work"]). */
-  ompArgs: readonly string[];
+  /** Host agent description: herdr kind, bootstrap args, fork resume argv. */
+  spec: AgentHostSpec;
 }
 
 export interface HerdrLike {
@@ -61,17 +61,35 @@ function ompProcessArgs(): string[] {
   return value === undefined ? [flag] : [flag, value];
 }
 
-function handlerCtx(ctx: ExtensionCommandCtx): HandlerCtx {
+/** The omp entry's host description: launch flags and herdr kind for omp. */
+export function ompSpec(): AgentHostSpec {
+  return { kind: "omp", agentArgs: ompProcessArgs(), resumeArgs: (fork) => ["--resume", fork.newId] };
+}
+
+/** The pi entry's host description: launch flags and herdr kind for pi. */
+export function piSpec(): AgentHostSpec {
+  return { kind: "pi", agentArgs: [], resumeArgs: (fork) => ["--session", fork.file] };
+}
+
+export interface AgentHostSpec {
+  kind: "omp" | "pi";
+  agentArgs: readonly string[];
+  resumeArgs: (fork: ForkCopy) => string[];
+}
+
+export type HerdrKind = AgentHostSpec["kind"];
+
+function handlerCtx(ctx: ExtensionCommandCtx, spec: AgentHostSpec): HandlerCtx {
   const sessionFile = ctx.sessionManager.getSessionFile();
   if (!sessionFile) throw new Error("fork-in-herdr: current session has no session file");
   return {
-    herdr: new HerdrClient(),
+    herdr: new HerdrClient(spec.kind),
     cwd: ctx.cwd,
     sessionFile,
     env: process.env,
     busy: !ctx.isIdle(),
     notify: (message) => ctx.ui.notify(message, "info"),
-    ompArgs: ompProcessArgs(),
+    spec,
   };
 }
 
@@ -113,7 +131,7 @@ export async function runForkInHerdr(ctx: HandlerCtx): Promise<void> {
         await ctx.herdr.startAgent({
           paneId,
           agentName: agentName(HERDR_WORKSPACE_ID, label),
-          agentArgs: [...ctx.ompArgs, "--resume", fork.newId],
+          agentArgs: [...ctx.spec.agentArgs, ...ctx.spec.resumeArgs(fork)],
         });
         lastError = undefined;
         break;
@@ -135,16 +153,15 @@ export async function runForkInHerdr(ctx: HandlerCtx): Promise<void> {
   }
 }
 
-export function forkInHerdr(pi: ExtensionApiLike): void {
+export function registerForkInHerdr(pi: ExtensionApiLike, spec: AgentHostSpec): void {
   pi.registerCommand("fork-in-herdr", {
     description: "Tab-fork: fork this conversation into a new herdr tab",
     handler: async (args, ctx) => {
       if (args.trim() !== "") {
         throw new Error("fork-in-herdr takes no arguments");
       }
-      await runForkInHerdr(handlerCtx(ctx));
+      await runForkInHerdr(handlerCtx(ctx, spec));
     },
   });
 }
 
-export default forkInHerdr;

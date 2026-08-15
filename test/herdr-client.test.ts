@@ -11,7 +11,7 @@ function clientWith(commands: { argv: string[]; stdout: string }[]) {
       return hit.stdout;
     },
   };
-  return { client: new HerdrClient(runner), seen };
+  return { client: new HerdrClient("omp", runner), seen };
 }
 
 const TAB_GET = JSON.stringify({
@@ -50,7 +50,7 @@ describe("herdr client", () => {
     expect(paneId).toBe("w14:p5");
   });
 
-  it("startAgent passes name, kind, pane, and agent args after --", async () => {
+  it("startAgent passes kind as the agent name, pane, and agent args after --", async () => {
     const { client, seen } = clientWith([
       { argv: ["agent", "start", "fork-w14-2f1", "--kind", "omp", "--pane", "w14:p5", "--", "--resume", "abcd"], stdout: "{}" },
     ]);
@@ -71,7 +71,7 @@ describe("herdr client", () => {
         throw new Error("herdr tab failed (exit 1): boom");
       },
     };
-    await expect(new HerdrClient(runner).getTab("w14:t1")).rejects.toThrow("herdr tab failed (exit 1): boom");
+    await expect(new HerdrClient("omp", runner).getTab("w14:t1")).rejects.toThrow("herdr tab failed (exit 1): boom");
   });
 
   it("processRunner surfaces exit code and stderr", async () => {
