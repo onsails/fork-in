@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+
 /**
  * Executes a herdr CLI invocation: argv without the leading "herdr",
  * returns stdout. Implementations must reject when herdr exits non-zero
@@ -9,21 +11,22 @@ export interface Runner {
 
 /** Runs `herdr <argv...>` and captures stdout; rejects on non-zero exit. */
 export const processRunner: Runner = {
-  run: async (argv) => {
-    const proc = Bun.spawn(["herdr", ...argv], {
-      stdout: "pipe",
-      stderr: "pipe",
-      stdin: "ignore",
+  run: (argv) => {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const proc = spawn("herdr", [...argv], { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    proc.stdout.on("data", (chunk) => (stdout += chunk));
+    proc.stderr.on("data", (chunk) => (stderr += chunk));
+    proc.on("error", reject);
+    proc.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(`herdr ${argv[0]?.toString() ?? ""} failed (exit ${code}): ${stderr.trim()}`));
+      } else {
+        resolve(stdout);
+      }
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-    if (exitCode !== 0) {
-      throw new Error(`herdr ${argv[0]?.toString() ?? ""} failed (exit ${exitCode}): ${stderr.trim()}`);
-    }
-    return stdout;
+    return promise;
   },
 };
 

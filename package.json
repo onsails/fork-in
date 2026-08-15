@@ -1,7 +1,7 @@
 {
   "name": "fork-in-herdr",
   "version": "0.1.0",
-  "description": "omp extension: /fork-in-herdr tab-forks the current herdr tab with the omp conversation",
+  "description": "omp and pi plugin: /fork-in-herdr tab-forks the current herdr tab with the agent session",
   "omp": {
     "extensions": ["./src/omp.ts"]
   },

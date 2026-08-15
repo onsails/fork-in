@@ -21,16 +21,22 @@ Conversation-fork semantics — and cannot produce a separate herdr tab.
 
 - The fork copy preserves the prompt-cache lineage:
   `providerPromptCacheKey` = the original's key, or its session id when absent
-  — mirroring omp's native `SessionManager.forkFrom()`. On content-prefix
-  caching providers (e.g. proxies pooling models) this is a no-op; on
-  session-keyed providers it routes the fork's first request to the parent's
-  warm cache shard, matching native `/fork` and `/tan` precedent. Measured
-  2026-08-15 on a manifest proxy: both key-preserving and key-stripped forks
-  hit cache on the first resumed turn (~81k tokens cacheRead), because that
-  backend caches by content prefix.
+  — mirroring omp's native `SessionManager.forkFrom()` (session-manager.ts:
+  `providerPromptCacheKey: sourceHeader?.providerPromptCacheKey ?? sourceHeader?.id`).
+  On content-prefix caching providers this is a no-op; on session-keyed
+  providers it routes the fork's requests through the parent's cache lineage,
+  matching native `/fork` and `/tan` precedent. Verification on 2026-08-15
+  (local `manifest` model proxy, content-prefix caching): key-preserving and
+  key-stripped forks resumed identically (both warm, `cacheRead` 25,792 on
+  the first resumed turn over a ~2.8k-token unique transcript) — the proxy
+  cannot distinguish the regimes, so the keyed-provider benefit is
+  source-verified, not measured. Proving the keyed effect requires a
+  session-keyed provider (e.g. Anthropic direct).
 - omp's `--profile` bootstrap flags are forwarded to the fork's omp; pi has no
   equivalent (`agentArgs: []`).
-- herdr's `agent start --kind pi` currently times out on pi 0.37 because the
-  remote detection manifest (2026.06.10.1) defines no idle rule for pi's
-  footer. The tab-fork path is identical to omp's (same createTab + startAgent
-  calls, `--kind pi`); unblock by fixing herdr's pi detection, not this plugin.
+- `herdr agent start --kind pi` timed out on pi 0.37.8 in every attempt
+  (2026-08-15): pi runs and loads extensions in the pane, but herdr's
+  readiness detection never fires; root cause not isolated (observed with
+  `herdr-agent-state.ts` v8 loaded and extensions green). The tab-fork path
+  is identical to omp's (same createTab + startAgent calls, `--kind pi`);
+  unblock by fixing herdr's pi detection, not this plugin.

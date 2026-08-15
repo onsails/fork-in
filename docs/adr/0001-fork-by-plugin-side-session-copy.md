@@ -1,14 +1,14 @@
 # Fork by plugin-side session copy, not omp fork APIs
 
-`/fork-in-herdr` needs a history-carrying fork of the current omp session that leaves the
-original tab untouched. omp's real fork (`AgentSession.fork()`) is not reachable from
+`/fork-in-herdr` needs a history-carrying fork of the current agent session that leaves
+the original tab untouched. omp's real fork (`AgentSession.fork()`) is not reachable from
 extension command contexts; the reachable alternatives don't fork (`newSession` is
 empty-with-lineage, `branch` truncates at the selected entry, copies no artifacts, and
 adopts the branch in the current tab). We decided the plugin performs the fork itself:
-copy the session JSONL with a fresh UUIDv7 id and `parentSession` = original id, drop
-`providerPromptCacheKey` originally; that drop was superseded by ADR-0002: the fork
-copy now preserves the original's prompt-cache lineage, like omp's native forkFrom.
-and recursively copy the sibling artifact directory.
+copy the session JSONL with a fresh UUIDv7 id, `parentSession` = original id, and
+recursively copy the sibling artifact directory. The original implementation dropped
+`providerPromptCacheKey`; ADR-0002 supersedes that — the fork copy now preserves the
+original's prompt-cache lineage, like omp's native forkFrom.
 
 Rejected: patching omp to expose a `forkToFile()` extension-context method (composes
 existing `SessionManager.forkFrom()` + artifact copy). Cleaner long-term, but forces a

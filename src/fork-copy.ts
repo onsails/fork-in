@@ -1,8 +1,19 @@
-import { cp, exists, mkdir, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const SUPPORTED_HEADER_VERSION = 3;
 
+/**
+ * UUIDv7 (time-ordered, omp-native session-id format) built from Node's
+ * randomUUID entropy: 48-bit ms timestamp, version 7, RFC variant.
+ */
+function uuidv7(): string {
+  const e = (randomUUID() + randomUUID()).replaceAll("-", "");
+  const ts = Date.now().toString(16).padStart(12, "0");
+  return `${ts.slice(0, 8)}-${ts.slice(8)}-7${e.slice(0, 3)}-8${e.slice(3, 6)}-${e.slice(6, 18)}`;
+}
 export interface ForkCopy {
   /** Absolute path of the fork copy JSONL (inside the original's session dir). */
   file: string;
@@ -37,26 +48,29 @@ interface SessionHeader {
  * references keep resolving.
  */
 export async function createForkCopy(sessionFile: string): Promise<ForkCopy> {
-  const file = Bun.file(sessionFile);
-  if (!(await file.exists())) {
+  let text: string;
+  try {
+    text = await readFile(sessionFile, "utf8");
+  } catch {
     throw new Error(
-      `fork-in-herdr: session has no transcript yet — omp writes the session file on the first turn; send a message before forking (${sessionFile})`,
+      `fork-in-herdr: session has no transcript yet — the agent writes the session file on the first turn; send a message before forking (${sessionFile})`,
     );
   }
-  const text = await file.text();
   const lines = text.split("\n");
   if (lines.at(-1) === "") lines.pop();
 
-  const headerIndex = lines.findIndex((line) => {
+  const parsed = lines.map((line) => {
     try {
-      return (JSON.parse(line) as { type?: string }).type === "session";
+      return JSON.parse(line) as { type?: string };
     } catch {
-      return false;
+      return { type: undefined };
     }
   });
+  const headerIndex = parsed.findIndex((entry) => entry.type === "session");
   if (headerIndex === -1) {
     throw new Error(`fork-in-herdr: session file has no session header line: ${sessionFile}`);
   }
+
   let header: SessionHeader;
   try {
     header = JSON.parse(lines[headerIndex]!) as SessionHeader;
@@ -72,7 +86,7 @@ export async function createForkCopy(sessionFile: string): Promise<ForkCopy> {
     throw new Error(`fork-in-herdr: session header has no session id: ${sessionFile}`);
   }
 
-  const newId = Bun.randomUUIDv7();
+  const newId = uuidv7();
   const { providerPromptCacheKey: inheritedKey, ...rest } = header;
   const newHeader: SessionHeader = {
     ...rest,
@@ -93,7 +107,7 @@ export async function createForkCopy(sessionFile: string): Promise<ForkCopy> {
 
   const originalArtifactDir = sessionFile.slice(0, -".jsonl".length);
   let artifactDir: string | null = null;
-  if (await exists(originalArtifactDir)) {
+  if (existsSync(originalArtifactDir)) {
     artifactDir = newFile.slice(0, -".jsonl".length);
     await cp(originalArtifactDir, artifactDir, { recursive: true });
   }
