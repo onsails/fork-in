@@ -12,7 +12,7 @@ Requires omp 17.2.x (or pi 0.37+) and herdr 0.8.x.
 omp plugin install https://github.com/onsails/fork-in-herdr
 ```
 
-That's it — omp links the plugin from git into `~/.omp/plugins` and `/fork-in-herdr` is available in every session. Use `--scope project` to install only into the current project. Update later with `omp plugin upgrade`. For pi, load the entry with `pi -e ./src/pi.ts` (package install via `pi install` in newer pi versions).
+That's it — omp links the plugin from git into `~/.omp/plugins` and `/fork-in-herdr` is available in every session. Use `--scope project` to install only into the current project. Update later with `omp plugin upgrade`. For pi, load the entry with `pi -e ./src/pi.ts`, or link the repo into `~/.pi/agent/extensions/fork-in-herdr` (pi reads `pi.extensions` from the package manifest; upgrade pi if it lacks a package installer).
 
 ## Use
 
