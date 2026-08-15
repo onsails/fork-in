@@ -122,7 +122,7 @@ export async function runForkInHerdr(ctx: HandlerCtx): Promise<void> {
     const labels = await ctx.herdr.listLabels(HERDR_WORKSPACE_ID);
     const label = forkLabel(original.label, labels);
     const paneId = await ctx.herdr.createTab({ workspaceId: HERDR_WORKSPACE_ID, cwd: ctx.cwd, label });
-    ctx.notify(`fork-in-herdr: starting omp in ${label}…`);
+    ctx.notify(`fork-in-herdr: starting ${ctx.spec.kind} in ${label}…`);
     // agent start requires the pane at its shell prompt; a fresh tab's
     // shell may still be initializing — retry briefly before surfacing.
     let lastError: unknown;
@@ -148,7 +148,7 @@ export async function runForkInHerdr(ctx: HandlerCtx): Promise<void> {
     ctx.notify(`fork-in-herdr: forked to ${label} (session ${fork.newId})`);
   } catch (err) {
     throw new Error(
-      `fork-in-herdr: fork copy ${fork.newId} exists; if a tab was left open, start omp manually with: omp --resume ${fork.newId}: ${err instanceof Error ? err.message : String(err)}`,
+      `fork-in-herdr: fork copy ${fork.newId} exists; if a tab was left open, resume it manually: ${ctx.spec.kind} ${ctx.spec.resumeArgs(fork).join(" ")}: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 }
