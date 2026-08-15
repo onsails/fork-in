@@ -53,7 +53,7 @@ export async function createForkCopy(sessionFile: string, host: "omp" | "pi" = "
     text = await readFile(sessionFile, "utf8");
   } catch {
     throw new Error(
-      `fork-in-herdr: session has no transcript yet — the agent writes the session file on the first turn; send a message before forking (${sessionFile})`,
+      `fork-in: session has no transcript yet — the agent writes the session file on the first turn; send a message before forking (${sessionFile})`,
     );
   }
   const lines = text.split("\n");
@@ -68,22 +68,22 @@ export async function createForkCopy(sessionFile: string, host: "omp" | "pi" = "
   });
   const headerIndex = parsed.findIndex((entry) => entry.type === "session");
   if (headerIndex === -1) {
-    throw new Error(`fork-in-herdr: session file has no session header line: ${sessionFile}`);
+    throw new Error(`fork-in: session file has no session header line: ${sessionFile}`);
   }
 
   let header: SessionHeader;
   try {
     header = JSON.parse(lines[headerIndex]!) as SessionHeader;
   } catch {
-    throw new Error(`fork-in-herdr: session header (line ${headerIndex + 1}) is not JSON: ${sessionFile}`);
+    throw new Error(`fork-in: session header (line ${headerIndex + 1}) is not JSON: ${sessionFile}`);
   }
   if (header.version !== SUPPORTED_HEADER_VERSION) {
     throw new Error(
-      `fork-in-herdr: session header version ${String(header.version)} unsupported (expected ${SUPPORTED_HEADER_VERSION}): ${sessionFile}`,
+      `fork-in: session header version ${String(header.version)} unsupported (expected ${SUPPORTED_HEADER_VERSION}): ${sessionFile}`,
     );
   }
   if (typeof header.id !== "string" || header.id === "") {
-    throw new Error(`fork-in-herdr: session header has no session id: ${sessionFile}`);
+    throw new Error(`fork-in: session header has no session id: ${sessionFile}`);
   }
 
   const newId = uuidv7();

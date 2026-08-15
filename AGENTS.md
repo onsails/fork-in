@@ -1,10 +1,10 @@
-# fork-in-herdr
+# fork-in
 
 ## Agent skills
 
 ### Issue tracker
 
-Issues live in GitHub Issues (`onsails/fork-in-herdr`), via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+Issues live in GitHub Issues (`onsails/fork-in`), via the `gh` CLI. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

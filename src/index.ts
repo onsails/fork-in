@@ -1,9 +1,10 @@
-import { HerdrClient } from "./herdr-client";
+import { HerdrClient, type HerdrLike } from "./herdr-client";
 import { forkLabel } from "./fork-label";
 import { createForkCopy, type ForkCopy } from "./fork-copy";
+import { TmuxDestination } from "./tmux-destination";
 
 /**
- * The shared extension factory surface fork-in-herdr needs. omp and pi expose
+ * The shared extension factory surface fork-in needs. omp and pi expose
  * this shape; the structural type avoids importing either host's internals.
  */
 export interface ExtensionApiLike {
@@ -24,26 +25,26 @@ export interface ExtensionCommandCtx {
   sessionManager: { getSessionFile(): string | undefined };
 }
 
+/** Host agent description: herdr kind, bootstrap args, fork resume argv. */
+export interface AgentHostSpec {
+  kind: "omp" | "pi";
+  agentArgs: readonly string[];
+  resumeArgs: (fork: ForkCopy) => string[];
+}
+
 /**
- * The plugin's single herdr choke point and environment, injected so tests
- * drive the handler without spawning processes.
+ * A fork destination (herdr or tmux), injected so tests drive the pipeline
+ * without spawning processes.
  */
 export interface HandlerCtx {
-  herdr: HerdrLike;
   cwd: string;
   sessionFile: string;
   env: Record<string, string | undefined>;
   busy: boolean;
   notify: (message: string) => void;
-  /** Host agent description: herdr kind, bootstrap args, fork resume argv. */
   spec: AgentHostSpec;
-}
-
-export interface HerdrLike {
-  getTab(tabId: string): Promise<{ tabId: string; label: string; workspaceId: string }>;
-  listLabels(workspaceId: string): Promise<string[]>;
-  createTab(opts: { workspaceId: string; cwd: string; label: string }): Promise<string>;
-  startAgent(opts: { paneId: string; agentName: string; agentArgs: readonly string[] }): Promise<void>;
+  herdr?: HerdrLike;
+  tmux?: TmuxDestination;
 }
 
 function ompProcessArgs(): string[] {
@@ -67,24 +68,18 @@ export function piSpec(): AgentHostSpec {
   return { kind: "pi", agentArgs: [], resumeArgs: (fork) => ["--session", fork.file] };
 }
 
-export interface AgentHostSpec {
-  kind: "omp" | "pi";
-  agentArgs: readonly string[];
-  resumeArgs: (fork: ForkCopy) => string[];
-}
-
-
 function handlerCtx(ctx: ExtensionCommandCtx, spec: AgentHostSpec): HandlerCtx {
   const sessionFile = ctx.sessionManager.getSessionFile();
-  if (!sessionFile) throw new Error("fork-in-herdr: current session has no session file");
+  if (!sessionFile) throw new Error("fork-in: current session has no session file");
   return {
-    herdr: new HerdrClient(spec.kind),
     cwd: ctx.cwd,
     sessionFile,
     env: process.env,
     busy: !ctx.isIdle(),
     notify: (message) => ctx.ui.notify(message, "info"),
     spec,
+    herdr: new HerdrClient(spec.kind),
+    tmux: new TmuxDestination(process.env),
   };
 }
 
@@ -100,30 +95,43 @@ function agentName(workspaceId: string, label: string): string {
 const AGENT_START_ATTEMPTS = 4;
 const AGENT_START_RETRY_DELAY_MS = 500;
 
+/** Shared pipeline: guard, copy, hand to the destination, report recovery. */
+async function runFork(ctx: HandlerCtx, command: string, forkInto: (fork: ForkCopy, label: string) => Promise<string>): Promise<void> {
+  if (ctx.busy) {
+    throw new Error(`${command}: agent is busy — wait for the current turn to finish`);
+  }
+  ctx.notify(`${command}: creating fork copy…`);
+  const fork = await createForkCopy(ctx.sessionFile, ctx.spec.kind);
+  try {
+    const label = await forkInto(fork, "");
+    ctx.notify(`${command}: forked to ${label} (session ${fork.newId})`);
+    return;
+  } catch (err) {
+    throw new Error(
+      `${command}: fork copy ${fork.newId} exists; if a window/tab was left open, resume it manually: ${ctx.spec.kind} ${[...ctx.spec.agentArgs, ...ctx.spec.resumeArgs(fork)].join(" ")}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
 export async function runForkInHerdr(ctx: HandlerCtx): Promise<void> {
+  const command = "fork-in-herdr";
+  const herdr = ctx.herdr ?? new HerdrClient(ctx.spec.kind);
   const { HERDR_ENV, HERDR_WORKSPACE_ID, HERDR_TAB_ID } = ctx.env;
   if (!HERDR_ENV || !HERDR_WORKSPACE_ID || !HERDR_TAB_ID) {
-    throw new Error("fork-in-herdr: not running inside herdr (HERDR_ENV unset) — nothing to fork into");
+    throw new Error(`${command}: not running inside herdr (HERDR_ENV unset) — nothing to fork into`);
   }
-  if (ctx.busy) {
-    throw new Error("fork-in-herdr: agent is busy — wait for the current turn to finish");
-  }
-
-  ctx.notify("fork-in-herdr: creating fork copy…");
-  const fork = await createForkCopy(ctx.sessionFile, ctx.spec.kind);
-
-  try {
-    const original = await ctx.herdr.getTab(HERDR_TAB_ID);
-    const labels = await ctx.herdr.listLabels(HERDR_WORKSPACE_ID);
+  await runFork(ctx, command, async (fork) => {
+    const original = await herdr.getTab(HERDR_TAB_ID);
+    const labels = await herdr.listLabels(HERDR_WORKSPACE_ID);
     const label = forkLabel(original.label, labels);
-    const paneId = await ctx.herdr.createTab({ workspaceId: HERDR_WORKSPACE_ID, cwd: ctx.cwd, label });
-    ctx.notify(`fork-in-herdr: starting ${ctx.spec.kind} in ${label}…`);
+    const paneId = await herdr.createTab({ workspaceId: HERDR_WORKSPACE_ID, cwd: ctx.cwd, label });
+    ctx.notify(`${command}: starting ${ctx.spec.kind} in ${label}…`);
     // agent start requires the pane at its shell prompt; a fresh tab's
     // shell may still be initializing — retry briefly before surfacing.
     let lastError: unknown;
     for (let attempt = 0; attempt < AGENT_START_ATTEMPTS; attempt++) {
       try {
-        await ctx.herdr.startAgent({
+        await herdr.startAgent({
           paneId,
           agentName: agentName(HERDR_WORKSPACE_ID, label),
           agentArgs: [...ctx.spec.agentArgs, ...ctx.spec.resumeArgs(fork)],
@@ -140,23 +148,45 @@ export async function runForkInHerdr(ctx: HandlerCtx): Promise<void> {
       }
     }
     if (lastError !== undefined) throw lastError;
-    ctx.notify(`fork-in-herdr: forked to ${label} (session ${fork.newId})`);
-  } catch (err) {
-    throw new Error(
-      `fork-in-herdr: fork copy ${fork.newId} exists; if a tab was left open, resume it manually: ${ctx.spec.kind} ${[...ctx.spec.agentArgs, ...ctx.spec.resumeArgs(fork)].join(" ")}: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-}
-
-export function registerForkInHerdr(api: ExtensionApiLike, spec: AgentHostSpec): void {
-  api.registerCommand("fork-in-herdr", {
-    description: "Tab-fork: fork this conversation into a new herdr tab",
-    handler: async (args, ctx) => {
-      if (args.trim() !== "") {
-        throw new Error("fork-in-herdr takes no arguments");
-      }
-      await runForkInHerdr(handlerCtx(ctx, spec));
-    },
+    return label;
   });
 }
 
+export async function runForkInTmux(ctx: HandlerCtx): Promise<void> {
+  const command = "fork-in-tmux";
+  const tmux = ctx.tmux ?? new TmuxDestination(ctx.env);
+  if (!tmux.available()) {
+    throw new Error(`${command}: not running inside tmux ($TMUX unset) — nothing to fork into`);
+  }
+  await runFork(ctx, command, async (fork) => {
+    const source = await tmux.source();
+    const names = await tmux.listWindowNames(source.sessionId);
+    const label = forkLabel(source.windowName, names);
+    ctx.notify(`${command}: starting ${ctx.spec.kind} in window ${label}…`);
+    await tmux.spawn({
+      source,
+      cwd: ctx.cwd,
+      label,
+      argv: [ctx.spec.kind, ...ctx.spec.agentArgs, ...ctx.spec.resumeArgs(fork)],
+    });
+    return label;
+  });
+}
+
+
+export function registerCommands(api: ExtensionApiLike, spec: AgentHostSpec): void {
+  api.registerCommand("fork-in-herdr", {
+    description: "Tab-fork: fork this conversation into a new herdr tab",
+    handler: async (args, ctx) => {
+      if (args.trim() !== "") throw new Error("fork-in-herdr takes no arguments");
+      await runForkInHerdr(handlerCtx(ctx, spec));
+    },
+  });
+  api.registerCommand("fork-in-tmux", {
+    description: "Window-fork: fork this conversation into a new tmux window",
+    handler: async (args, ctx) => {
+      if (args.trim() !== "") throw new Error("fork-in-tmux takes no arguments");
+      await runForkInTmux(handlerCtx(ctx, spec));
+    },
+  });
+}

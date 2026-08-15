@@ -1,6 +1,6 @@
-import { registerForkInHerdr, piSpec, type ExtensionApiLike } from "./index";
+import { registerCommands, piSpec, type ExtensionApiLike } from "./index";
 
-/** pi entry: registers /fork-in-herdr for the pi host (pi manifests: pi.extensions). */
-export default function forkInHerdrPi(api: ExtensionApiLike): void {
-  registerForkInHerdr(api, piSpec());
+/** pi entry: registers /fork-in-herdr and /fork-in-tmux (pi.extensions). */
+export default function forkInPi(api: ExtensionApiLike): void {
+  registerCommands(api, piSpec());
 }

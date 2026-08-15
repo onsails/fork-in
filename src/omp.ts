@@ -1,6 +1,6 @@
-import { registerForkInHerdr, ompSpec, type ExtensionApiLike } from "./index";
+import { registerCommands, ompSpec, type ExtensionApiLike } from "./index";
 
-/** omp entry: registers /fork-in-herdr from the omp.extensions manifest. */
-export default function forkInHerdrOmp(api: ExtensionApiLike): void {
-  registerForkInHerdr(api, ompSpec());
+/** omp entry: registers /fork-in-herdr and /fork-in-tmux (omp.extensions). */
+export default function forkInOmp(api: ExtensionApiLike): void {
+  registerCommands(api, ompSpec());
 }

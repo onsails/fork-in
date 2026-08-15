@@ -1,7 +1,7 @@
 {
-  "name": "fork-in-herdr",
-  "version": "0.1.0",
-  "description": "omp and pi plugin: /fork-in-herdr tab-forks the current herdr tab with the agent session",
+  "name": "fork-in",
+  "version": "0.2.0",
+  "description": "omp and pi plugin: /fork-in-herdr and /fork-in-tmux fork the current agent session into a new herdr tab or tmux window",
   "omp": {
     "extensions": ["./src/omp.ts"]
   },

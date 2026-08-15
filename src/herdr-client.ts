@@ -30,12 +30,19 @@ export const processRunner: Runner = {
   },
 };
 
+/** The herdr operations the fork pipeline needs; tests substitute fakes. */
+export interface HerdrLike {
+  getTab(tabId: string): Promise<Tab>;
+  listLabels(workspaceId: string): Promise<string[]>;
+  createTab(opts: { workspaceId: string; cwd: string; label: string }): Promise<string>;
+  startAgent(opts: { paneId: string; agentName: string; agentArgs: readonly string[] }): Promise<void>;
+}
+
 export interface Tab {
   tabId: string;
   label: string;
   workspaceId: string;
 }
-
 /**
  * The single choke point for every herdr interaction (spec: all invocations
  * JSON in, JSON out). Constructed with the Runner it should use; tests

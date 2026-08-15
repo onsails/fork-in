@@ -30,7 +30,7 @@ function writeFixture(dir: string, id: string): { file: string; artifactDir: str
         version: 3,
         id,
         timestamp: "2026-08-14T22:55:27.165Z",
-        cwd: "/home/wb/dev/os/fork-in-herdr",
+        cwd: "/home/wb/dev/os/fork-in",
         parentSession: null,
         providerPromptCacheKey: id,
       }),
@@ -68,7 +68,7 @@ describe("createForkCopy", () => {
     expect(header.id).toBe(fork.newId);
     expect(header.parentSession).toBe(oldId);
     expect(header.providerPromptCacheKey).toBe(oldId);
-    expect(header.cwd).toBe("/home/wb/dev/os/fork-in-herdr");
+    expect(header.cwd).toBe("/home/wb/dev/os/fork-in");
     expect(header.version).toBe(3);
   });
 

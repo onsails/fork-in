@@ -3,7 +3,7 @@
 # (provider cache semantics need a real provider), isolated session trees
 # via --session-dir, reads message.usage (assistant entries).
 set -euo pipefail
-repo=/home/wb/dev/os/fork-in-herdr
+repo=/home/wb/dev/os/fork-in
 root=$(mktemp -d /tmp/cache-proof-v3-XXXXXX)
 srcdir="$root/src"; warmdir="$root/warm"; colddir="$root/cold"
 mkdir -p "$srcdir" "$warmdir" "$colddir"
