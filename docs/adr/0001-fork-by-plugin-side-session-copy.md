@@ -1,5 +1,10 @@
 # Fork by plugin-side session copy, not omp fork APIs
 
+> **Partially superseded by ADR-0002** (2026-08-15): the fork copy now
+> *preserves* `providerPromptCacheKey` (matching omp's native
+> `forkFrom`), and the header is located by scan, not fixed at line 2.
+> The core decision — plugin-side copy, not agent fork APIs — stands.
+
 `/fork-in-herdr` needs a history-carrying fork of the current agent session that leaves
 the original tab untouched. omp's real fork (`AgentSession.fork()`) is not reachable from
 extension command contexts; the reachable alternatives don't fork (`newSession` is
