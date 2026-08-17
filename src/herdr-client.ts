@@ -30,12 +30,53 @@ export const processRunner: Runner = {
   },
 };
 
-/** The herdr operations the fork pipeline needs; tests substitute fakes. */
+export interface AgentSession {
+  kind: string;
+  value: string;
+}
+
+export interface AgentRecord {
+  agent: string;
+  paneId: string;
+  agentSession?: AgentSession;
+}
+
+function parseAgentRecord(out: string, operation: string): AgentRecord {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(out);
+  } catch {
+    throw new Error(`${operation} returned invalid JSON: ${out.slice(0, 200)}`);
+  }
+  if (parsed === null || typeof parsed !== "object" || !("result" in parsed) || parsed.result === null || typeof parsed.result !== "object" || !("agent" in parsed.result) || parsed.result.agent === null || typeof parsed.result.agent !== "object") {
+    throw new Error(`${operation} returned unexpected shape: ${out.slice(0, 200)}`);
+  }
+  const record = parsed.result.agent;
+  if (!("agent" in record) || typeof record.agent !== "string" || !("pane_id" in record) || typeof record.pane_id !== "string") {
+    throw new Error(`${operation} returned unexpected shape: ${out.slice(0, 200)}`);
+  }
+  let agentSession: AgentSession | undefined;
+  if ("agent_session" in record && record.agent_session !== undefined) {
+    const session = record.agent_session;
+    if (session === null || typeof session !== "object" || !("kind" in session) || typeof session.kind !== "string" || !("value" in session) || typeof session.value !== "string") {
+      throw new Error(`${operation} returned unexpected agent_session shape: ${out.slice(0, 200)}`);
+    }
+    agentSession = { kind: session.kind, value: session.value };
+  }
+  return { agent: record.agent, paneId: record.pane_id, ...(agentSession ? { agentSession } : {}) };
+}
+
+function isAgentNotRunning(error: unknown): boolean {
+  return error instanceof Error && /agent_not_running|agent not running|not found/i.test(error.message);
+}
+
+ /** The herdr operations the fork pipeline needs; tests substitute fakes. */
 export interface HerdrLike {
   getTab(tabId: string): Promise<Tab>;
   listLabels(workspaceId: string): Promise<string[]>;
   createTab(opts: { workspaceId: string; cwd: string; label: string }): Promise<string>;
-  startAgent(opts: { paneId: string; agentName: string; agentArgs: readonly string[] }): Promise<void>;
+  startAgent(opts: { paneId: string; agentName: string; agentArgs: readonly string[] }): Promise<AgentRecord>;
+  getAgent(paneId: string): Promise<AgentRecord | null>;
 }
 
 export interface Tab {
@@ -97,8 +138,8 @@ export class HerdrClient {
     return paneId;
   }
 
-  async startAgent(opts: { paneId: string; agentName: string; agentArgs: readonly string[] }): Promise<void> {
-    await this.#runner.run([
+  async startAgent(opts: { paneId: string; agentName: string; agentArgs: readonly string[] }): Promise<AgentRecord> {
+    const out = await this.#runner.run([
       "agent",
       "start",
       opts.agentName,
@@ -109,5 +150,16 @@ export class HerdrClient {
       "--",
       ...opts.agentArgs,
     ]);
+    return parseAgentRecord(out, "herdr agent start");
+  }
+
+  async getAgent(paneId: string): Promise<AgentRecord | null> {
+    try {
+      const out = await this.#runner.run(["agent", "get", paneId]);
+      return parseAgentRecord(out, "herdr agent get");
+    } catch (error) {
+      if (isAgentNotRunning(error)) return null;
+      throw error;
+    }
   }
 }

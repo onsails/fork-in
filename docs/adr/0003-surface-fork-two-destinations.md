@@ -1,33 +1,15 @@
 # Surface-fork: one pipeline, two destinations (herdr and tmux)
 
-The plugin grew a second command: `/fork-in-tmux` alongside `/fork-in-herdr`.
-Both share one pipeline (guards → fork copy → destination) and differ only in
-the destination adapter. We extracted the destination seam instead of forking
-the handler: herdr needs tab lookup, label listing, tab creation, and agent
-start with shell-readiness retries; tmux resolves the source pane from
-`$TMUX_PANE` and execs the agent argv directly in a new window — no shell, no
-retries.
+The plugin has `/fork-in-herdr` and `/fork-in-tmux`. Both share one pipeline: guards, host-selected session fork, destination, and recovery reporting.
 
-tmux specifics that shaped the adapter: the source window is targeted by
-stable `session_id:window_id` (never numeric index — renumbering and multiple
-clients make indices ambiguous); the window is created with `-d -a` (adjacent,
-unfocused); the fork label is applied against all window names in the source
-session (one fork-label rule for both hosts); `remain-on-exit on` keeps a
-failed start inspectable and `automatic-rename off` pins the label. Agent
-argv is passed as separate `new-window` arguments, so no shell quoting.
+Herdr needs tab lookup, label listing, tab creation, and one agent start. Herdr 0.8.0 owns shell-readiness retries. The plugin does not retry `agent start`.
 
-Rejected: inferring the host or agent from `pane_current_command`/process
-trees — the host is already known statically from the entry file (`omp.ts` /
-`pi.ts`) that registered the commands. Rejected: hiding each command when its
-destination is unavailable — both always register and refuse at runtime with
-an actionable error, keeping behavior predictable across surfaces.
+tmux resolves the source pane from `$TMUX_PANE` and execs the agent argv directly in a new adjacent window. It does not poll OMP readiness. `remain-on-exit on` keeps startup errors inspectable, and `automatic-rename off` pins the label.
 
 ## Consequences
 
-- Both commands exist under both hosts: omp/pi × herdr/tmux are all supported;
-  the host chooses the resumed agent, the command chooses the destination.
-- Fork labels share one rule across herdr tabs and tmux windows; neither host
-  guarantees label uniqueness, so the rule counts only sibling surfaces.
-- The repo/package was renamed to `fork-in` (commands unchanged; GitHub
-  redirects the old URL). ADR-0001/0002's session-copy decisions are
-  destination-neutral and unchanged.
+- Both commands exist under both hosts.
+- OMP uses native `--fork`; Pi uses its plugin-created copy.
+- Herdr can report the observed child OMP session path.
+- tmux cannot report child session identity synchronously and reports only the surface label.
+- Fork labels share one rule across herdr tabs and tmux windows.

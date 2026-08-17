@@ -50,20 +50,51 @@ describe("herdr client", () => {
     expect(paneId).toBe("w14:p5");
   });
 
-  it("startAgent passes kind as the agent name, pane, and agent args after --", async () => {
+  it("startAgent parses the returned agent record", async () => {
+    const record = JSON.stringify({ result: { agent: { agent: "fork-w14-2f1", pane_id: "w14:p5", agent_session: { kind: "omp", value: "/tmp/child.jsonl" } } } });
     const { client, seen } = clientWith([
-      { argv: ["agent", "start", "fork-w14-2f1", "--kind", "omp", "--pane", "w14:p5", "--", "--resume", "abcd"], stdout: "{}" },
+      { argv: ["agent", "start", "fork-w14-2f1", "--kind", "omp", "--pane", "w14:p5", "--", "--fork", "/tmp/source.jsonl"], stdout: record },
     ]);
-    await client.startAgent({ paneId: "w14:p5", agentName: "fork-w14-2f1", agentArgs: ["--resume", "abcd"] });
-    expect(seen).toEqual([["agent", "start", "fork-w14-2f1", "--kind", "omp", "--pane", "w14:p5", "--", "--resume", "abcd"]]);
+    await expect(client.startAgent({ paneId: "w14:p5", agentName: "fork-w14-2f1", agentArgs: ["--fork", "/tmp/source.jsonl"] })).resolves.toEqual({ agent: "fork-w14-2f1", paneId: "w14:p5", agentSession: { kind: "omp", value: "/tmp/child.jsonl" } });
+    expect(seen).toHaveLength(1);
   });
 
-  it("passes pi as the herdr agent kind", async () => {
+  it("looks up an agent and handles explicit not-running errors", async () => {
+    const record = JSON.stringify({ result: { agent: { agent: "fork-w14-2f1", pane_id: "w14:p5", agent_session: { kind: "omp", value: "/tmp/child.jsonl" } } } });
+    const { client } = clientWith([{ argv: ["agent", "get", "w14:p5"], stdout: record }]);
+    await expect(client.getAgent("w14:p5")).resolves.toEqual({ agent: "fork-w14-2f1", paneId: "w14:p5", agentSession: { kind: "omp", value: "/tmp/child.jsonl" } });
+  });
+
+  it("rejects a malformed agent_session shape", async () => {
+    const record = JSON.stringify({ result: { agent: { agent: "fork-w14-2f1", pane_id: "w14:p5", agent_session: { kind: "omp" } } } });
+    const { client } = clientWith([{ argv: ["agent", "start", "fork-w14-2f1", "--kind", "omp", "--pane", "w14:p5", "--", "--fork", "/tmp/source.jsonl"], stdout: record }]);
+    await expect(client.startAgent({ paneId: "w14:p5", agentName: "fork-w14-2f1", agentArgs: ["--fork", "/tmp/source.jsonl"] })).rejects.toThrow(/agent_session shape/);
+  });
+
+  it("preserves malformed and transport failures during agent lookup", async () => {
+    const malformed = clientWith([{ argv: ["agent", "get", "w14:p5"], stdout: "{}" }]).client;
+    await expect(malformed.getAgent("w14:p5")).rejects.toThrow(/unexpected shape/);
+    const failing = new HerdrClient("omp", { run: async () => { throw new Error("transport failed"); } });
+    await expect(failing.getAgent("w14:p5")).rejects.toThrow("transport failed");
+  });
+
+  it("returns null for an explicit not-running error", async () => {
+    const client = new HerdrClient("omp", { run: async () => { throw new Error("agent_not_running"); } });
+    await expect(client.getAgent("w14:p5")).resolves.toBeNull();
+  });
+
+  it("passes agent arguments after --", async () => {
+    const record = JSON.stringify({ result: { agent: { agent: "fork-w14-2f1", pane_id: "w14:p5" } } });
+    const { client } = clientWith([{ argv: ["agent", "start", "fork-w14-2f1", "--kind", "omp", "--pane", "w14:p5", "--", "--fork", "/tmp/source.jsonl"], stdout: record }]);
+    await client.startAgent({ paneId: "w14:p5", agentName: "fork-w14-2f1", agentArgs: ["--fork", "/tmp/source.jsonl"] });
+  });
+
+  it("passes pi as the Herdr agent kind", async () => {
     const seen: string[][] = [];
     const runner: Runner = {
       run: async (argv) => {
         seen.push([...argv]);
-        return "{}";
+        return JSON.stringify({ result: { agent: { agent: "fork-w14-2f2", pane_id: "w14:p6", agent_session: { kind: "pi", value: "/tmp/fork.jsonl" } } } });
       },
     };
     const client = new HerdrClient("pi", runner);

@@ -1,12 +1,9 @@
-import { HerdrClient, type HerdrLike } from "./herdr-client";
+import { resolve } from "node:path";
+import { HerdrClient, type AgentRecord, type HerdrLike } from "./herdr-client";
 import { forkLabel } from "./fork-label";
-import { createForkCopy, type ForkCopy } from "./fork-copy";
+import { createForkCopy } from "./fork-copy";
 import { TmuxDestination } from "./tmux-destination";
 
-/**
- * The shared extension factory surface fork-in needs. omp and pi expose
- * this shape; the structural type avoids importing either host's internals.
- */
 export interface ExtensionApiLike {
   registerCommand(
     name: string,
@@ -17,7 +14,6 @@ export interface ExtensionApiLike {
   ): void;
 }
 
-/** The command context fields used by the shared HandlerCtx adapter. */
 export interface ExtensionCommandCtx {
   cwd: string;
   isIdle(): boolean;
@@ -25,17 +21,18 @@ export interface ExtensionCommandCtx {
   sessionManager: { getSessionFile(): string | undefined };
 }
 
-/** Host agent description: herdr kind, bootstrap args, fork resume argv. */
-export interface AgentHostSpec {
-  kind: "omp" | "pi";
-  agentArgs: readonly string[];
-  resumeArgs: (fork: ForkCopy) => string[];
+export interface HostForkLaunch {
+  argv: string[];
+  recoveryArgs: string[];
+  sourceFile: string;
+  copiedFile?: string;
 }
 
-/**
- * A fork destination (herdr or tmux), injected so tests drive the pipeline
- * without spawning processes.
- */
+export interface AgentHostSpec {
+  kind: "omp" | "pi";
+  prepareFork: (sessionFile: string) => Promise<HostForkLaunch>;
+}
+
 export interface HandlerCtx {
   cwd: string;
   sessionFile: string;
@@ -47,25 +44,73 @@ export interface HandlerCtx {
   tmux?: TmuxDestination;
 }
 
-function ompProcessArgs(): string[] {
-  // Drop argv[0]/argv[1] (runtime + script); keep bootstrap flags like --profile.
-  const scriptArgs = process.argv.slice(2);
-  const profile = scriptArgs.findIndex((a) => a === "--profile" || a.startsWith("--profile="));
-  if (profile === -1) return [];
-  const flag = scriptArgs[profile]!;
-  if (flag.includes("=")) return [flag];
-  const value = scriptArgs[profile + 1];
-  return value === undefined ? [flag] : [flag, value];
+interface OverlayToken {
+  index: number;
+  args: string[];
+  kind: "profile" | "config" | "session-dir";
 }
 
-/** The omp entry's host description: launch flags and herdr kind for omp. */
+const OMP_VALUE_FLAGS: Record<string, true> = {
+  "--model": true,
+  "--provider": true,
+  "--extension": true,
+  "--prompt": true,
+  "--system-prompt": true,
+  "--session": true,
+  "--session-dir": true,
+  "--profile": true,
+  "--config": true,
+  "--thinking": true,
+  "--api-key": true,
+};
+
+/** Returns the effective OMP bootstrap overlays without importing OMP internals. */
+export function ompProcessArgs(argv: readonly string[] = process.argv.slice(2)): string[] {
+  const tokens: OverlayToken[] = [];
+  let lastProfile: OverlayToken | undefined;
+  let lastSessionDir: OverlayToken | undefined;
+  const configs: OverlayToken[] = [];
+
+  for (let index = 0; index < argv.length; index++) {
+    const token = argv[index]!;
+    const equalsIndex = token.indexOf("=");
+    const flag = equalsIndex === -1 ? token : token.slice(0, equalsIndex);
+    const inlineValue = equalsIndex === -1 ? undefined : token.slice(equalsIndex + 1);
+    const consumesNext = equalsIndex === -1 && OMP_VALUE_FLAGS[flag] === true;
+    const next = argv[index + 1];
+    const args = inlineValue === undefined && consumesNext && next !== undefined ? [token, next] : [token];
+
+    if (flag === "--profile") lastProfile = { index, args, kind: "profile" };
+    if (flag === "--config") configs.push({ index, args, kind: "config" });
+    if (flag === "--session-dir") lastSessionDir = { index, args, kind: "session-dir" };
+    if (consumesNext && next !== undefined) index++;
+  }
+
+  tokens.push(...(lastProfile ? [lastProfile] : []), ...configs, ...(lastSessionDir ? [lastSessionDir] : []));
+  tokens.sort((left, right) => left.index - right.index);
+  return tokens.flatMap((token) => token.args);
+}
+
 export function ompSpec(): AgentHostSpec {
-  return { kind: "omp", agentArgs: ompProcessArgs(), resumeArgs: (fork) => ["--resume", fork.newId] };
+  return {
+    kind: "omp",
+    prepareFork: async (sessionFile) => {
+      const sourceFile = resolve(sessionFile);
+      const args = [...ompProcessArgs(), "--fork", sourceFile];
+      return { argv: args, recoveryArgs: args, sourceFile };
+    },
+  };
 }
 
-/** The pi entry's host description: launch flags and herdr kind for pi. */
 export function piSpec(): AgentHostSpec {
-  return { kind: "pi", agentArgs: [], resumeArgs: (fork) => ["--session", fork.file] };
+  return {
+    kind: "pi",
+    prepareFork: async (sessionFile) => {
+      const sourceFile = resolve(sessionFile);
+      const fork = await createForkCopy(sourceFile);
+      return { argv: ["--session", fork.file], recoveryArgs: ["--session", fork.file], sourceFile, copiedFile: fork.file };
+    },
+  };
 }
 
 function handlerCtx(ctx: ExtensionCommandCtx, spec: AgentHostSpec): HandlerCtx {
@@ -83,34 +128,44 @@ function handlerCtx(ctx: ExtensionCommandCtx, spec: AgentHostSpec): HandlerCtx {
   };
 }
 
-/**
- * herdr agent name: unique among live agents ([a-z][a-z0-9_-]{0,31}),
- * derived from workspace id + fork label, which forkLabel made unique in
- * the workspace.
- */
 function agentName(workspaceId: string, label: string): string {
   return `fork-${workspaceId}-${label}`.toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 32);
 }
 
-const AGENT_START_ATTEMPTS = 4;
-const AGENT_START_RETRY_DELAY_MS = 500;
+interface ForkResult {
+  label: string;
+  sessionPath?: string;
+}
 
-/** Shared pipeline: guard, copy, hand to the destination, report recovery. */
-async function runFork(ctx: HandlerCtx, command: string, forkInto: (fork: ForkCopy, label: string) => Promise<string>): Promise<void> {
-  if (ctx.busy) {
-    throw new Error(`${command}: agent is busy — wait for the current turn to finish`);
-  }
-  ctx.notify(`${command}: creating fork copy…`);
-  const fork = await createForkCopy(ctx.sessionFile, ctx.spec.kind);
+function recoveryCommand(ctx: HandlerCtx, launch: HostForkLaunch): string {
+  return `${ctx.spec.kind} ${launch.recoveryArgs.join(" ")}`;
+}
+
+async function runFork(
+  ctx: HandlerCtx,
+  command: string,
+  forkInto: (launch: HostForkLaunch, label: string) => Promise<ForkResult>,
+): Promise<void> {
+  if (ctx.busy) throw new Error(`${command}: agent is busy — wait for the current turn to finish`);
+  ctx.notify(`${command}: preparing fork…`);
+  const launch = await ctx.spec.prepareFork(ctx.sessionFile);
   try {
-    const label = await forkInto(fork, "");
-    ctx.notify(`${command}: forked to ${label} (session ${fork.newId})`);
-    return;
-  } catch (err) {
+    const result = await forkInto(launch, "");
+    const identity = result.sessionPath ? ` (session ${result.sessionPath})` : "";
+    ctx.notify(`${command}: forked to ${result.label}${identity}`);
+  } catch (error) {
     throw new Error(
-      `${command}: fork copy ${fork.newId} exists; if a window/tab was left open, resume it manually: ${ctx.spec.kind} ${[...ctx.spec.agentArgs, ...ctx.spec.resumeArgs(fork)].join(" ")}: ${err instanceof Error ? err.message : String(err)}`,
+      `${command}: new surface may exist; inspect it and retry with: ${recoveryCommand(ctx, launch)}: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
+}
+
+function matchingAgent(record: AgentRecord | null, ctx: HandlerCtx, paneId: string, launch: HostForkLaunch): string | undefined {
+  const session = record?.agentSession;
+  if (!record || record.paneId !== paneId || record.agent !== ctx.spec.kind || !session || session.kind !== "path" || session.value === "") return undefined;
+  if (ctx.spec.kind === "omp" && session.value === launch.sourceFile) return undefined;
+  if (ctx.spec.kind === "pi" && session.value !== launch.copiedFile) return undefined;
+  return session.value;
 }
 
 export async function runForkInHerdr(ctx: HandlerCtx): Promise<void> {
@@ -120,59 +175,46 @@ export async function runForkInHerdr(ctx: HandlerCtx): Promise<void> {
   if (!HERDR_ENV || !HERDR_WORKSPACE_ID || !HERDR_TAB_ID) {
     throw new Error(`${command}: not running inside herdr (HERDR_ENV unset) — nothing to fork into`);
   }
-  await runFork(ctx, command, async (fork) => {
+  await runFork(ctx, command, async (launch) => {
     const original = await herdr.getTab(HERDR_TAB_ID);
     const labels = await herdr.listLabels(HERDR_WORKSPACE_ID);
     const label = forkLabel(original.label, labels);
     const paneId = await herdr.createTab({ workspaceId: HERDR_WORKSPACE_ID, cwd: ctx.cwd, label });
     ctx.notify(`${command}: starting ${ctx.spec.kind} in ${label}…`);
-    // agent start requires the pane at its shell prompt; a fresh tab's
-    // shell may still be initializing — retry briefly before surfacing.
-    let lastError: unknown;
-    for (let attempt = 0; attempt < AGENT_START_ATTEMPTS; attempt++) {
+    try {
+      const started = await herdr.startAgent({
+        paneId,
+        agentName: agentName(HERDR_WORKSPACE_ID, label),
+        agentArgs: launch.argv,
+      });
+      const sessionPath = matchingAgent(started, ctx, paneId, launch);
+      if (!sessionPath) throw new Error(`${command}: herdr start returned no matching child session path`);
+      return { label, sessionPath };
+    } catch (startError) {
       try {
-        await herdr.startAgent({
-          paneId,
-          agentName: agentName(HERDR_WORKSPACE_ID, label),
-          agentArgs: [...ctx.spec.agentArgs, ...ctx.spec.resumeArgs(fork)],
-        });
-        lastError = undefined;
-        break;
-      } catch (err) {
-        lastError = err;
-        if (attempt < AGENT_START_ATTEMPTS - 1) {
-          const { promise, resolve } = Promise.withResolvers<void>();
-          setTimeout(resolve, AGENT_START_RETRY_DELAY_MS);
-          await promise;
-        }
+        const recovered = matchingAgent(await herdr.getAgent(paneId), ctx, paneId, launch);
+        if (recovered) return { label, sessionPath: recovered };
+      } catch {
+        // Preserve the original start failure when reconciliation itself fails.
       }
+      throw startError;
     }
-    if (lastError !== undefined) throw lastError;
-    return label;
   });
 }
 
 export async function runForkInTmux(ctx: HandlerCtx): Promise<void> {
   const command = "fork-in-tmux";
   const tmux = ctx.tmux ?? new TmuxDestination(ctx.env);
-  if (!tmux.available()) {
-    throw new Error(`${command}: not running inside tmux ($TMUX unset) — nothing to fork into`);
-  }
-  await runFork(ctx, command, async (fork) => {
+  if (!tmux.available()) throw new Error(`${command}: not running inside tmux ($TMUX unset) — nothing to fork into`);
+  await runFork(ctx, command, async (launch) => {
     const source = await tmux.source();
     const names = await tmux.listWindowNames(source.sessionId);
     const label = forkLabel(source.windowName, names);
     ctx.notify(`${command}: starting ${ctx.spec.kind} in window ${label}…`);
-    await tmux.spawn({
-      source,
-      cwd: ctx.cwd,
-      label,
-      argv: [ctx.spec.kind, ...ctx.spec.agentArgs, ...ctx.spec.resumeArgs(fork)],
-    });
-    return label;
+    await tmux.spawn({ source, cwd: ctx.cwd, label, argv: [ctx.spec.kind, ...launch.argv] });
+    return { label };
   });
 }
-
 
 export function registerCommands(api: ExtensionApiLike, spec: AgentHostSpec): void {
   api.registerCommand("fork-in-herdr", {
@@ -191,14 +233,6 @@ export function registerCommands(api: ExtensionApiLike, spec: AgentHostSpec): vo
   });
 }
 
-/**
- * Fallback entry for hosts that skip the package manifest and walk the
- * source directory (omp's settings+config.yml dual-config path resolves
- * configured dirs by directory scan, not package.json). The per-host
- * manifests remain authoritative: omp.extensions -> src/omp.ts,
- * pi.extensions -> src/pi.ts. This export only fires when neither is
- * honored, so detect the host from the running binary's basename.
- */
 export default function forkIn(api: ExtensionApiLike): void {
   const host = process.argv[0]?.endsWith("/pi") || process.argv[0] === "pi" ? "pi" : "omp";
   registerCommands(api, host === "pi" ? piSpec() : ompSpec());

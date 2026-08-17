@@ -47,7 +47,7 @@ describe("TmuxDestination", () => {
   it("creates the adjacent unfocused window and pins its name", async () => {
     const { runner, seen } = runnerWith([
       {
-        argv: ["new-window", "-d", "-a", "-t", "$3:@7", "-c", "/repo", "-n", "workf1", "-P", "-F", "#{pane_id}", "omp", "--resume", "01"],
+        argv: ["new-window", "-d", "-a", "-t", "$3:@7", "-c", "/repo", "-n", "workf1", "-P", "-F", "#{pane_id}", "omp", "--fork", "/tmp/source.jsonl"],
         stdout: "%12\n",
       },
       { argv: ["display-message", "-p", "-t", "%12", "-F", "#{window_id}"], stdout: "@9\n" },
@@ -58,7 +58,7 @@ describe("TmuxDestination", () => {
       source: { sessionId: "$3", windowId: "@7", windowName: "work", paneId: "%11" },
       cwd: "/repo",
       label: "workf1",
-      argv: ["omp", "--resume", "01"],
+      argv: ["omp", "--fork", "/tmp/source.jsonl"],
     });
     expect(paneId).toBe("%12");
     expect(seen[2]).toEqual(["set-option", "-w", "-t", "@9", "remain-on-exit", "on"]);
