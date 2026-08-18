@@ -21,12 +21,16 @@ const TAB_GET = JSON.stringify({
 });
 const TAB_LIST = JSON.stringify({
   id: "cli:tab:list",
-  result: { tabs: [{ label: "1" }, { label: "2" }, { label: "2f1" }] },
+  result: { tabs: [
+    { tab_id: "w14:t0", label: "1" },
+    { tab_id: "w14:t1", label: "2" },
+    { tab_id: "w14:t9", label: "2f1" },
+  ] },
   type: "tab_list",
 });
 const TAB_CREATE = JSON.stringify({
   id: "cli:tab:create",
-  result: { tab: { tab_id: "w14:t3", label: "2f2" }, root_pane: { pane_id: "w14:p5" } },
+  result: { tab: { tab_id: "w14:t3", label: "2f2" }, root_pane: { pane_id: "w14:p5", tab_id: "w14:t3" } },
   type: "tab_created",
 });
 
@@ -37,17 +41,28 @@ describe("herdr client", () => {
     expect(tab).toEqual({ tabId: "w14:t1", label: "2", workspaceId: "w14" });
   });
 
-  it("existingLabels reads every label from tab list", async () => {
+  it("listTabs returns tab ids and labels in visual order", async () => {
     const { client } = clientWith([{ argv: ["tab", "list", "--workspace", "w14"], stdout: TAB_LIST }]);
-    expect(await client.listLabels("w14")).toEqual(["1", "2", "2f1"]);
+    expect(await client.listTabs("w14")).toEqual([
+      { tabId: "w14:t0", label: "1" },
+      { tabId: "w14:t1", label: "2" },
+      { tabId: "w14:t9", label: "2f1" },
+    ]);
   });
 
-  it("createForkTab passes workspace, cwd, label, no-focus; returns pane id", async () => {
-    const { client, seen } = clientWith([
+  it("createForkTab passes workspace, cwd, label, no-focus; returns tab and pane ids", async () => {
+    const { client } = clientWith([
       { argv: ["tab", "create", "--workspace", "w14", "--cwd", "/repo", "--label", "2f2", "--no-focus"], stdout: TAB_CREATE },
     ]);
-    const paneId = await client.createTab({ workspaceId: "w14", cwd: "/repo", label: "2f2" });
-    expect(paneId).toBe("w14:p5");
+    const created = await client.createTab({ workspaceId: "w14", cwd: "/repo", label: "2f2" });
+    expect(created).toEqual({ paneId: "w14:p5", tabId: "w14:t3" });
+  });
+
+  it("moveTab delegates to the socket mover", async () => {
+    const moved: { tabId: string; insertIndex: number }[] = [];
+    const client = new HerdrClient("omp", processRunner, { moveTab: async (opts) => { moved.push(opts); } });
+    await client.moveTab({ tabId: "w14:tF", insertIndex: 2 });
+    expect(moved).toEqual([{ tabId: "w14:tF", insertIndex: 2 }]);
   });
 
   it("startAgent parses the returned agent record", async () => {

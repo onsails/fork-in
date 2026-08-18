@@ -177,10 +177,18 @@ export async function runForkInHerdr(ctx: HandlerCtx): Promise<void> {
   }
   await runFork(ctx, command, async (launch) => {
     const original = await herdr.getTab(HERDR_TAB_ID);
-    const labels = await herdr.listLabels(HERDR_WORKSPACE_ID);
-    const label = forkLabel(original.label, labels);
-    const paneId = await herdr.createTab({ workspaceId: HERDR_WORKSPACE_ID, cwd: ctx.cwd, label });
-    ctx.notify(`${command}: starting ${ctx.spec.kind} in ${label}…`);
+    const tabs = await herdr.listTabs(HERDR_WORKSPACE_ID);
+    const label = forkLabel(original.label, tabs.map((tab) => tab.label));
+    const created = await herdr.createTab({ workspaceId: HERDR_WORKSPACE_ID, cwd: ctx.cwd, label });
+    const paneId = created.paneId;
+    const sourceIndex = tabs.findIndex((tab) => tab.tabId === HERDR_TAB_ID);
+    if (sourceIndex !== -1) {
+      try {
+        await herdr.moveTab({ tabId: created.tabId, insertIndex: sourceIndex + 1 });
+      } catch (error) {
+        ctx.notify(`${command}: could not place ${label} next to the current tab (${error instanceof Error ? error.message : String(error)}); it stays at the end`);
+      }
+    }
     try {
       const started = await herdr.startAgent({
         paneId,

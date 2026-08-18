@@ -24,12 +24,20 @@ function agentRecord(paneId: string, kind = "omp", value = OMP_CHILD): AgentReco
   return { agent: kind, paneId, agentSession: { kind: "path", value } };
 }
 
-function fakeHerdr(options: { start?: AgentRecord | Error; get?: AgentRecord | null | Error } = {}) {
+function fakeHerdr(options: { start?: AgentRecord | Error; get?: AgentRecord | null | Error; moveError?: Error; tabs?: { tabId: string; label: string }[] } = {}) {
   const calls: string[] = [];
   const herdr: HerdrLike = {
     getTab: async (tabId) => { calls.push(`getTab:${tabId}`); return { tabId, label: "2", workspaceId: "w14" }; },
-    listLabels: async (workspaceId) => { calls.push(`listLabels:${workspaceId}`); return ["1", "2", "2f1"]; },
-    createTab: async (opts) => { calls.push(`createTab:${opts.workspaceId}:${opts.cwd}:${opts.label}`); return "w14:p5"; },
+    listTabs: async (workspaceId) => {
+      calls.push(`listTabs:${workspaceId}`);
+      return options.tabs ?? [
+        { tabId: "w14:t0", label: "1" },
+        { tabId: "w14:t1", label: "2" },
+        { tabId: "w14:t9", label: "2f1" },
+      ];
+    },
+    createTab: async (opts) => { calls.push(`createTab:${opts.workspaceId}:${opts.cwd}:${opts.label}`); return { paneId: "w14:p5", tabId: "w14:tF" }; },
+    moveTab: async (opts) => { calls.push(`moveTab:${opts.tabId}:${opts.insertIndex}`); if (options.moveError) throw options.moveError; },
     startAgent: async (opts) => {
       calls.push(`startAgent:${opts.paneId}:${opts.agentName}:${opts.agentArgs.join(",")}`);
       if (options.start instanceof Error) throw options.start;
@@ -104,7 +112,29 @@ describe("runForkInHerdr", () => {
     const before = readdirSync(sessionDir);
     await runForkInHerdr(ctx);
     expect(readdirSync(sessionDir)).toEqual(before);
-    expect(calls).toEqual(["getTab:w14:t1", "listLabels:w14", "createTab:w14:/repo:2f2", `startAgent:w14:p5:fork-w14-2f2:--fork,${resolve(ctx.sessionFile)}`]);
+    expect(calls).toEqual(["getTab:w14:t1", "listTabs:w14", "createTab:w14:/repo:2f2", "moveTab:w14:tF:2", `startAgent:w14:p5:fork-w14-2f2:--fork,${resolve(ctx.sessionFile)}`]);
+  });
+
+  it("places the fork tab immediately after the original even with tabs to its right", async () => {
+    const { herdr, calls } = fakeHerdr();
+    await runForkInHerdr(handlerCtx({ herdr }));
+    expect(calls.indexOf("moveTab:w14:tF:2")).toBeGreaterThan(calls.findIndex((call) => call.startsWith("createTab:")));
+    expect(calls.indexOf("moveTab:w14:tF:2")).toBeLessThan(calls.findIndex((call) => call.startsWith("startAgent:")));
+  });
+
+  it("keeps the fork and warns when tab placement fails", async () => {
+    const { herdr, calls } = fakeHerdr({ moveError: new Error("unknown method tab.move") });
+    const messages: string[] = [];
+    await runForkInHerdr(handlerCtx({ herdr, notify: (message) => messages.push(message) }));
+    expect(calls.some((call) => call.startsWith("startAgent:"))).toBe(true);
+    expect(messages.some((message) => /could not place 2f2 next to the current tab/.test(message))).toBe(true);
+  });
+
+  it("skips placement when the source tab is missing from the tab list", async () => {
+    const { herdr, calls } = fakeHerdr({ tabs: [{ tabId: "w14:t0", label: "1" }] });
+    await runForkInHerdr(handlerCtx({ herdr }));
+    expect(calls.some((call) => call.startsWith("moveTab:"))).toBe(false);
+    expect(calls.some((call) => call.startsWith("startAgent:"))).toBe(true);
   });
 
   it("forwards OMP overlays to Herdr and native fork", async () => {

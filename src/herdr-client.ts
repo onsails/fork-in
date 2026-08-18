@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { HerdrSocket, type TabMover } from "./herdr-socket";
 
 /**
  * Executes a herdr CLI invocation: argv without the leading "herdr",
@@ -73,8 +74,9 @@ function isAgentNotRunning(error: unknown): boolean {
  /** The herdr operations the fork pipeline needs; tests substitute fakes. */
 export interface HerdrLike {
   getTab(tabId: string): Promise<Tab>;
-  listLabels(workspaceId: string): Promise<string[]>;
-  createTab(opts: { workspaceId: string; cwd: string; label: string }): Promise<string>;
+  listTabs(workspaceId: string): Promise<TabSummary[]>;
+  createTab(opts: { workspaceId: string; cwd: string; label: string }): Promise<CreatedTab>;
+  moveTab(opts: { tabId: string; insertIndex: number }): Promise<void>;
   startAgent(opts: { paneId: string; agentName: string; agentArgs: readonly string[] }): Promise<AgentRecord>;
   getAgent(paneId: string): Promise<AgentRecord | null>;
 }
@@ -84,18 +86,33 @@ export interface Tab {
   label: string;
   workspaceId: string;
 }
+
+/** A tab's identity and label; listTabs returns them in visual order. */
+export interface TabSummary {
+  tabId: string;
+  label: string;
+}
+
+/** The surface herdr created: its tab id and root pane id. */
+export interface CreatedTab {
+  tabId: string;
+  paneId: string;
+}
 /**
- * The single choke point for every herdr interaction (spec: all invocations
- * JSON in, JSON out). Constructed with the Runner it should use; tests
- * substitute a recording fake.
+ * The single choke point for every herdr interaction. Everything goes through
+ * the CLI (JSON in, JSON out) except tab.move, which the CLI does not expose
+ * and which goes through the socket mover instead (ADR 0005). Constructed
+ * with the Runner and TabMover it should use; tests substitute fakes.
  */
 export class HerdrClient {
   #runner: Runner;
   #kind: "omp" | "pi";
+  #mover: TabMover;
 
-  constructor(kind: "omp" | "pi" = "omp", runner: Runner = processRunner) {
+  constructor(kind: "omp" | "pi" = "omp", runner: Runner = processRunner, mover: TabMover = new HerdrSocket()) {
     this.#kind = kind;
     this.#runner = runner;
+    this.#mover = mover;
   }
 
   async getTab(tabId: string): Promise<Tab> {
@@ -108,17 +125,22 @@ export class HerdrClient {
     return { tabId: tab.tab_id, label: tab.label, workspaceId: tab.workspace_id };
   }
 
-  async listLabels(workspaceId: string): Promise<string[]> {
+  async listTabs(workspaceId: string): Promise<TabSummary[]> {
     const out = await this.#runner.run(["tab", "list", "--workspace", workspaceId]);
-    const parsed = JSON.parse(out) as { result?: { tabs?: { label?: string }[] } };
+    const parsed = JSON.parse(out) as { result?: { tabs?: { tab_id?: string; label?: string }[] } };
     const tabs = parsed.result?.tabs;
     if (!Array.isArray(tabs)) {
       throw new Error(`herdr tab list returned unexpected shape: ${out.slice(0, 200)}`);
     }
-    return tabs.map((t) => t.label).filter((l): l is string => typeof l === "string");
+    return tabs.map((tab) => {
+      if (typeof tab.tab_id !== "string" || typeof tab.label !== "string") {
+        throw new Error(`herdr tab list returned unexpected shape: ${out.slice(0, 200)}`);
+      }
+      return { tabId: tab.tab_id, label: tab.label };
+    });
   }
 
-  async createTab(opts: { workspaceId: string; cwd: string; label: string }): Promise<string> {
+  async createTab(opts: { workspaceId: string; cwd: string; label: string }): Promise<CreatedTab> {
     const out = await this.#runner.run([
       "tab",
       "create",
@@ -130,12 +152,16 @@ export class HerdrClient {
       opts.label,
       "--no-focus",
     ]);
-    const parsed = JSON.parse(out) as { result?: { root_pane?: { pane_id?: string } } };
-    const paneId = parsed.result?.root_pane?.pane_id;
-    if (typeof paneId !== "string") {
-      throw new Error(`herdr tab create response has no .result.root_pane.pane_id: ${out.slice(0, 200)}`);
+    const parsed = JSON.parse(out) as { result?: { root_pane?: { pane_id?: string; tab_id?: string } } };
+    const rootPane = parsed.result?.root_pane;
+    if (typeof rootPane?.pane_id !== "string" || typeof rootPane.tab_id !== "string") {
+      throw new Error(`herdr tab create response has no .result.root_pane.pane_id/tab_id: ${out.slice(0, 200)}`);
     }
-    return paneId;
+    return { paneId: rootPane.pane_id, tabId: rootPane.tab_id };
+  }
+
+  async moveTab(opts: { tabId: string; insertIndex: number }): Promise<void> {
+    await this.#mover.moveTab(opts);
   }
 
   async startAgent(opts: { paneId: string; agentName: string; agentArgs: readonly string[] }): Promise<AgentRecord> {
